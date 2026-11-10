@@ -85,6 +85,7 @@ include_sub_directories_recursively(${CMAKE_SOURCE_DIR}/APP)
 include_sub_directories_recursively(${CMAKE_SOURCE_DIR}/BSP)
 include_sub_directories_recursively(${CMAKE_SOURCE_DIR}/MODULE)
 include_sub_directories_recursively(${CMAKE_SOURCE_DIR}/Algorithm)
+include_sub_directories_recursively(${CMAKE_SOURCE_DIR}/Hfsm)
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
