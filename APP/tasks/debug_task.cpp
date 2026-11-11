@@ -9,7 +9,7 @@
 
 namespace robot {
 
-DMA_BUFFER_BSS UartPortDma<64, 128, 512> uart1_debug_port(huart1, {});
+DMA_BUFFER_BSS inline UartPortDma<64, 128, 512> uart1_debug_port(huart1, {});
 
 } // namespace
 
