@@ -2,7 +2,15 @@
 
 #include <cstddef>
 #include <type_traits>
+#include <cstdint>
 #include <cassert>
+
+// 声明必需回调，函数体可放在 .cpp 中；用于需要额外成员或 guard 的状态。
+// MachineType 应为 MachineT 的类型别名，调用后需加分号。
+#define HFSM_STATE_CALLBACKS_WITH_BASE(MachineType) \
+    void enter(); \
+    void update(typename MachineType::Control&); \
+    void exit()
 
 namespace hfsm {
 
@@ -412,7 +420,7 @@ public:
             // 如果没有活跃分支，说明这个Composite没有进入过，直接返回
             if (active_ == NO_ACTIVE_BRANCH)
                 return;
-            // 先向下退出活跃的子状态，再退出头状态，实现从叶到根的退出顺序
+            // 先向下退出
             children_.visit(active_, Exit{core});
             head_.deepExit(core);
             // 记录应该被恢复的状态

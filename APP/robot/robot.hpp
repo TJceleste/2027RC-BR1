@@ -4,6 +4,8 @@
 #include "main.h"
 #include "memory_map.h"
 #include "rtos_utility.hpp"
+#include "hfsm.hpp"
+#include "robot_hfsm/states.hpp"
 #include "usart.h"
 #include "can_bus.hpp"
 #include "bsp_dwt.hpp"
@@ -38,7 +40,6 @@ inline C620Motor test_motor{can1_c620, 1};
 
 DMA_BUFFER_BSS inline UartPortDma<32, 32, 32 * 2> uart2_port{huart2, {}};
 inline Rs485Bus rs4851_bus{uart2_port};
-// inline Im6014Motor test_motor{0x00, 0};
 
 /**
  * @brief 初始化 DWT 并启动三路 CAN；CAN 设备已在构造时自动注册。
@@ -49,12 +50,6 @@ inline Rs485Bus rs4851_bus{uart2_port};
  */
 inline void init() {
     if (initialized) return;
-
-    // TODO(ETH): 在链接脚本中将 .RxDescripSection / .TxDescripSection 收入 RAM_D2，
-    // 分别按 32 字节对齐并纳入启动清零范围；核对 map，避免与 UART DMA 缓冲重叠。
-    // 接入收发时还需检查数据缓冲位置，启用 D-cache 时补齐 MPU 属性或缓存维护。
-    // TODO(ETH): 按硬件确认 ETH_RST 极性、复位时序及参考时钟，在 MX_ETH_Init() 前释放复位。
-    // MX_ETH_Init() 当前在 main() 中先于本函数执行，复位处理需前移；暂不使用 ETH 时暂缓初始化。
 
     // CYCCNT 使用 CPU 内核时钟，不能使用二分频
     // 后的 HCLK。
@@ -67,8 +62,29 @@ inline void init() {
     }
 
     initialized = true;
-    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
 }
 
+struct Robot_Context {
+    int context_example{0};
 };
+
+using Tree = M::PeerRoot<
+    M::Leaf< Disable >,
+    M::Composite< Enable,
+        M::Leaf< Starting >,
+        M::Composite< Manual,
+            M::Leaf< UniversalManual >
+        >,
+        M::Composite< Auto,
+            M::Leaf< WaitUpperComputer >,
+            M::Leaf< DevelopingAuto >,
+            M::Leaf< Paused >
+        >
+    >,
+    M::Leaf< Fault >
+>;
+
+inline Robot_Context robot_context{};
+using Machine = M::Instance<Tree>;
+inline Machine robot_machine(robot_context, M::Initial<Disable>());
+}; //namespace Robot

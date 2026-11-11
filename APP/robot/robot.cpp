@@ -3,4 +3,5 @@
 
 void robot_init(void) {
     robot::init();
+    robot::robot_machine.update();
 }
