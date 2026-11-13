@@ -12,6 +12,7 @@ void robot::TestRunning::entryGuard(robot::GuardControl& control) {
 }
 
 void robot::TestRunning::enter() {
+    robot_context.faults.fill(Robot_Context::FaultReason::None);
     // 子系统已运行，这里只初始化测试业务。
     speed_sequence_active_ = false;
     speed_phase_ = 0;

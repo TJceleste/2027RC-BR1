@@ -3,336 +3,216 @@
 #include <cassert>
 #include <iostream>
 
+using namespace robot;
+using SubsystemState = Subsystem::State;
+using Reason = Robot_Context::FaultReason;
+
+void tickAll() {
+    for (auto* subsystem : subsystems) subsystem->periodic();
+}
+
+template<class T> void reach() {
+    for (unsigned i = 0; i < 12 && !robot_machine.isActive<T>(); ++i) {
+        tickAll();
+        robot_machine.update();
+    }
+    assert(robot_machine.isActive<T>());
+}
+
 int main() {
-    using namespace robot;
-    using Status = Subsystem::StartupStatus;
-    const auto tick_all = [] {
-        for (auto* subsystem : subsystems) subsystem->periodic();
-    };
     assert(robot_machine.isActive<Disable>());
-    assert(robot_machine.immediateChangeTo<UniversalManual>() ==
-           M::TransitionResult::RejectedByEntryGuard);
-    assert(robot_machine.immediateChangeTo<TestRunning>() ==
-           M::TransitionResult::RejectedByEntryGuard);
-    assert(robot_machine.isActive<Disable>());
-    assert(test_subsystem.startupStatus() == Status::Idle);
+    assert(robot_machine.immediateChangeTo<UniversalManual>() == M::TransitionResult::RejectedByEntryGuard);
+    assert(robot_machine.immediateChangeTo<TestRunning>() == M::TransitionResult::RejectedByEntryGuard);
+    assert(robot_machine.immediateChangeTo<Recovering>() == M::TransitionResult::RejectedByEntryGuard);
     robot_machine.update();
-    assert(robot_machine.isActive<TestWaitPower>());
+    assert(robot_machine.isActive<TestStarting>());
     robot_machine.immediateChangeTo<Starting>();
-    assert(robot_machine.isActive<Starting>() && robot_machine.isActive<WaitPower>());
-    tick_all();
-    assert(test_subsystem.startupStatus() == Status::Idle);
-    assert(extra_subsystem.startupStatus() == Status::EnteringStandby);
+    tickAll();
     rtos::clock_ms = 60000;
+    tickAll();
     robot_machine.update();
-    tick_all();
-    assert(robot_machine.isActive<WaitPower>());
-    assert(!test_subsystem.hasFailed() && !extra_subsystem.hasFailed());
+    assert(robot_machine.isActive<Starting>());
+    assert(test_subsystem.state() == SubsystemState::Preparing && extra_subsystem.state() == SubsystemState::Preparing);
     assert(pid_init_count == 0 && extra_subsystem.prepares == 0);
-    assert(!test_motor.enabled && !extra_subsystem.output);
-    // 第一个子系统离线不能阻止后面的在线子系统先待机。
-    extra_subsystem.online = true;
-    robot_machine.update();
-    tick_all();
-    assert(robot_machine.isActive<WaitPower>());
-    assert(extra_subsystem.isStandby() && extra_subsystem.output);
-    assert(test_subsystem.startupStatus() == Status::Idle && pid_init_count == 0);
-    assert(extra_subsystem.prepares == 0);
-    extra_subsystem.online = false;
     test_motor.online = true;
+    tickAll();
     robot_machine.update();
-    tick_all();
-    assert(robot_machine.isActive<WaitPower>());
     assert(test_subsystem.isStandby() && test_motor.enabled && test_motor.current == 0);
-    assert(!extra_subsystem.output && !extra_subsystem.hasFailed());
-    for (unsigned i = 0; i < 3; ++i) {
-        rtos::clock_ms += 60000;
-        robot_machine.update();
-        tick_all();
-    }
-    assert(pid_init_count == 1 && extra_subsystem.prepares == 0);
-    assert(test_subsystem.isStandby() && !extra_subsystem.hasFailed());
+    assert(extra_subsystem.state() == SubsystemState::Preparing && !extra_subsystem.output);
+    assert(pid_init_count == 1 && robot_machine.isActive<Starting>());
     extra_subsystem.online = true;
-    robot_machine.update();
-    assert(robot_machine.isActive<PrepareSubsystems>());
-    assert(test_subsystem.startupStatus() == Status::Preparing);
-    tick_all();
-    assert(pid_init_count == 2 && extra_subsystem.prepares == 1);
-    assert(test_subsystem.isReady());
-    assert(extra_subsystem.startupStatus() == Status::Preparing);
+    tickAll();
     rtos::clock_ms += 4999;
-    tick_all();
+    tickAll();
     robot_machine.update();
-    assert(robot_machine.isActive<PrepareSubsystems>() && !test_motor.enabled);
-    assert(!extra_subsystem.hasFailed());
-    std::cout << "PASS: waiting power exceeds 5 seconds without preparing or timing out\n";
-    std::cout << "PASS: online subsystems hold standby while other devices remain offline\n";
+    assert(robot_machine.isActive<Starting>() && !extra_subsystem.hasFailed());
+    assert(test_subsystem.isStandby() && pid_init_count == 1);
     extra_subsystem.ready = true;
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<PrepareSubsystems>());
-    assert(robot_machine.immediateChangeTo<UniversalManual>() ==
-           M::TransitionResult::RejectedByEntryGuard);
-    for (unsigned i = 0; i < 3; ++i) {
-        robot_machine.update();
-        assert(robot_machine.isActive<PrepareSubsystems>());
-    }
-    assert(test_subsystem.isReady() && extra_subsystem.isReady());
+    tickAll();
+    robot_machine.update(); // Submit run requests exactly once.
+    assert(robot_machine.isActive<Starting>() && test_subsystem.isStandby());
+    for (unsigned i = 0; i < 3; ++i) robot_machine.update();
+    assert(robot_machine.isActive<Starting>() && extra_subsystem.isStandby());
     test_subsystem.periodic();
     robot_machine.update();
-    assert(robot_machine.isActive<PrepareSubsystems>() && extra_subsystem.isReady());
-    assert(robot_machine.immediateChangeTo<UniversalManual>() ==
-           M::TransitionResult::RejectedByEntryGuard);
-    extra_subsystem.periodic();
-    robot_machine.update();
-    assert(robot_machine.isActive<UniversalManual>());
-    tick_all();
+    assert(robot_machine.isActive<Starting>());
+    assert(robot_machine.immediateChangeTo<UniversalManual>() == M::TransitionResult::RejectedByEntryGuard);
+    reach<UniversalManual>();
     assert(test_subsystem.isRunning() && extra_subsystem.isRunning());
-    assert(test_motor.enabled && extra_subsystem.output);
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 0);
-    rtos::clock_ms += 12000;
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 0);
-    std::cout << "PASS: all devices must be online before prepare, then all subsystems must be ready\n";
-    std::cout << "PASS: UniversalManual does not generate test speed targets\n";
+    assert(pid_init_count == 1 && extra_subsystem.prepares == 1);
+    std::cout << "PASS: independent preparation, staggered power and actual run confirmation\n";
 
-    // 正式模式切到测试模式：集合外机构待机，不能沿用正式模式的运行命令。
     assert(test_subsystem.setTargetSpeed(7));
-    tick_all();
+    tickAll();
     assert(test_motor.current == 7);
-    const auto background_prepares = extra_subsystem.prepares;
     robot_machine.immediateChangeTo<TestStarting>();
-    assert(test_subsystem.startupStatus() == Status::EnteringStandby);
-    assert(extra_subsystem.startupStatus() == Status::EnteringStandby);
-    tick_all();
-    assert(test_subsystem.isStandby() && test_motor.current == 0 && test_motor.enabled);
-    assert(extra_subsystem.isStandby() && extra_subsystem.output);
+    tickAll();
+    assert(test_subsystem.isStandby() && extra_subsystem.isStandby());
+    assert(test_motor.current == 0 && test_motor.enabled && extra_subsystem.output);
+    reach<TestRunning>();
+    assert(pid_init_count == 1 && extra_subsystem.prepares == 1);
+    rtos::clock_ms = 0xFFFFFF00U;
     robot_machine.update();
-    tick_all();
-    robot_machine.update();
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<TestRunning>() && extra_subsystem.isStandby());
-    assert(extra_subsystem.prepares == background_prepares);
-
-    // 集合外机构掉线不阻塞测试，上线后由原待机请求重新保持。
+    tickAll();
+    assert(test_motor.current == 10);
+    for (float expected : {0.0f, -10.0f, 0.0f, 10.0f}) {
+        rtos::clock_ms += 3000;
+        robot_machine.update();
+        tickAll();
+        assert(test_motor.current == expected);
+    }
     extra_subsystem.online = false;
-    tick_all();
+    tickAll();
+    rtos::clock_ms += 60000;
+    tickAll();
     robot_machine.update();
     assert(robot_machine.isActive<TestRunning>() && !extra_subsystem.output);
     extra_subsystem.online = true;
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<TestRunning>() && extra_subsystem.isStandby());
-    assert(extra_subsystem.prepares == background_prepares);
+    tickAll();
+    assert(extra_subsystem.isStandby());
+    std::cout << "PASS: mode handoff reuses preparation, test sequence wraps and unused devices retry\n";
 
-    // 返回正式启动也由目的状态接管，不经禁用。
-    robot_machine.immediateChangeTo<Starting>();
-    tick_all();
-    assert(test_subsystem.isStandby() && extra_subsystem.isStandby());
-    robot_machine.update();
-    tick_all();
-    robot_machine.update();
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<UniversalManual>());
-    std::cout << "PASS: normal/test handoff keeps unused subsystems in standby without disabling\n";
-
-    extra_subsystem.ready = false;
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<Fault>());
-    assert(test_subsystem.startupStatus() == Status::Disabling);
-    assert(extra_subsystem.startupStatus() == Status::Disabling);
-    tick_all();
-    assert(!test_motor.enabled && !extra_subsystem.output);
-    std::cout << "PASS: failure in second subsystem disables every subsystem\n";
-
-    robot_machine.immediateChangeTo<Starting>();
-    robot_machine.update();
-    assert(robot_machine.isActive<PrepareSubsystems>());
-    tick_all();
-    rtos::clock_ms += 5000;
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<Fault>());
-    tick_all();
-    assert(!test_motor.enabled);
-    robot_machine.immediateChangeTo<Starting>();
-    assert(robot_machine.isActive<WaitPower>());
-    robot_machine.immediateChangeTo<Fault>();
-    tick_all();
-    assert(test_subsystem.startupStatus() == Status::Idle);
-    assert(extra_subsystem.startupStatus() == Status::Idle);
-    std::cout << "PASS: startup timeout and cancellation through Fault disable the whole group\n";
-
+    const auto healthy_prepares = extra_subsystem.prepares;
+    robot_context.recovery_requested.store(true); // A stale request must not authorize a new fault.
     test_motor.online = false;
-    extra_subsystem.online = false;
-    const auto extra_prepares = extra_subsystem.prepares;
-    robot_machine.immediateChangeTo<TestStarting>();
-    assert(robot_machine.isActive<TestWaitPower>());
-    tick_all();
-    rtos::clock_ms += 60000;
+    tickAll();
     robot_machine.update();
-    tick_all();
-    assert(robot_machine.isActive<TestWaitPower>());
-    assert(test_subsystem.startupStatus() == Status::Idle);
+    assert(robot_machine.isActive<Fault>() && !robot_context.recovery_requested.load());
+    assert(robot_context.faults[0] == Reason::SubsystemFailed && robot_context.faults[1] == Reason::None);
+    robot_context.recovery_requested.store(true);
+    assert(robot_machine.immediateChangeTo<Recovering>() == M::TransitionResult::RejectedByExitGuard);
+    robot_context.recovery_requested.store(false);
+    tickAll();
+    assert(test_subsystem.state() == SubsystemState::Disabled && extra_subsystem.isStandby());
     test_motor.online = true;
-    robot_machine.update();
-    assert(robot_machine.isActive<PrepareTestSubsystems>());
-    tick_all();
-    assert(test_subsystem.isReady());
-    assert(robot_machine.immediateChangeTo<TestRunning>() ==
-           M::TransitionResult::RejectedByEntryGuard);
-    assert(robot_machine.isActive<PrepareTestSubsystems>() && !test_motor.enabled);
-    robot_machine.update();
-    // 接受请求不等于已经运行；重复更新不能重复提交 requestRun()。
     for (unsigned i = 0; i < 3; ++i) {
-        assert(robot_machine.isActive<PrepareTestSubsystems>());
+        tickAll();
         robot_machine.update();
+        assert(robot_machine.isActive<Fault>() && test_subsystem.state() == SubsystemState::Disabled);
     }
-    assert(test_subsystem.isReady() && !test_motor.enabled);
-    tick_all();
-    assert(test_subsystem.isRunning() && test_motor.enabled);
-    assert(robot_machine.isActive<PrepareTestSubsystems>());
+    assert(robot_machine.immediateChangeTo<Starting>() == M::TransitionResult::RejectedByExitGuard);
+    robot_context.recovery_requested.store(true);
     robot_machine.update();
-    assert(robot_machine.isActive<TestRunning>());
-    assert(!extra_subsystem.isOnline() && !extra_subsystem.output);
-    assert(extra_subsystem.startupStatus() == Status::EnteringStandby);
-    assert(extra_subsystem.prepares == extra_prepares);
-    std::cout << "PASS: TestStarting waits and prepares only the selected test subset\n";
+    assert(robot_machine.isActive<Recovering>() && !robot_context.recovery_requested.load());
+    reach<TestRunning>();
+    assert(extra_subsystem.prepares == healthy_prepares && extra_subsystem.isStandby());
+    assert(robot_context.faults[0] == Reason::None);
+    std::cout << "PASS: selective fault isolation, explicit exit flag and recovery of only failed devices\n";
 
-    // The host PID substitute outputs target minus measured speed, exposing the
-    // target commanded by the actual TestRunning state without a target getter.
-    assert(test_motor.current == 0);
-    rtos::clock_ms = 0xFFFFFF00U;
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 10);
-    rtos::clock_ms += 2999;
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 10);
-    ++rtos::clock_ms;
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 0);
-    for (float expected : {-10.0f, 0.0f, 10.0f, 0.0f, -10.0f}) {
-        rtos::clock_ms += 3000;
-        robot_machine.update();
-        tick_all();
-        assert(test_motor.current == expected);
-    }
-    std::cout << "PASS: TestRunning advances its 3-second speed sequence across clock wrap\n";
-
-    robot_machine.immediateChangeTo<TestStarting>();
-    tick_all();
-    assert(test_subsystem.isStandby() && test_motor.enabled && test_motor.current == 0);
-    robot_machine.update();
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<PrepareTestSubsystems>());
-    // requestRun() has been accepted, but the control task has not handled it.
-    robot_machine.update();
-    assert(test_motor.current == 0 && !test_motor.enabled);
-    tick_all();
-    assert(test_subsystem.isRunning() && test_motor.current == 0);
-    robot_machine.update();
-    assert(robot_machine.isActive<TestRunning>() && test_motor.current == 0);
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 10);
-    rtos::clock_ms += 3000;
-    robot_machine.update();
-    tick_all();
-    assert(test_motor.current == 0);
-    std::cout << "PASS: re-entering TestRunning restarts at 10 after the subsystem is running\n";
-
+    // An unused offline device must not prevent test-mode fault recovery.
+    extra_subsystem.online = false;
     test_motor.online = false;
-    tick_all();
+    tickAll();
     robot_machine.update();
     assert(robot_machine.isActive<Fault>());
-    tick_all();
-    assert(!test_motor.enabled && test_subsystem.startupStatus() == Status::Idle);
-    robot_machine.immediateChangeTo<TestStarting>();
-    robot_machine.immediateChangeTo<Fault>();
-    tick_all();
-    assert(test_subsystem.startupStatus() == Status::Idle);
-    assert(extra_subsystem.startupStatus() == Status::Idle);
-    std::cout << "PASS: test feedback loss and cancellation through Fault disable every subsystem\n";
-
-    // 运行确认前取消，已接受的请求由 Fault::enter() 统一撤销。
+    tickAll();
     test_motor.online = true;
-    robot_machine.immediateChangeTo<TestStarting>();
+    robot_context.recovery_requested.store(true);
     robot_machine.update();
-    tick_all();
-    robot_machine.update();
-    assert(robot_machine.isActive<PrepareTestSubsystems>() && test_subsystem.isReady());
-    robot_machine.immediateChangeTo<Fault>();
-    tick_all();
-    assert(test_subsystem.startupStatus() == Status::Idle && !test_motor.enabled);
+    reach<TestRunning>();
+    assert(extra_subsystem.state() == SubsystemState::Preparing);
+    std::cout << "PASS: test recovery does not wait for healthy devices outside the test subset\n";
 
-    // 在准备完成后预先提交一次请求，模拟编排提交时 requestRun() 被拒绝。
-    robot_machine.immediateChangeTo<TestStarting>();
-    robot_machine.update();
-    tick_all();
-    assert(test_subsystem.requestRun());
-    robot_machine.update();
-    assert(robot_machine.isActive<Fault>());
-    tick_all();
-    assert(test_subsystem.startupStatus() == Status::Idle && !test_motor.enabled);
-
-    // 运行请求接受后、控制任务实际启动时失败，由准备状态处理故障。
-    robot_machine.immediateChangeTo<TestStarting>();
-    robot_machine.update();
-    tick_all();
-    robot_machine.update();
+    // Recovery failure must re-enter Fault and require a fresh request.
     test_motor.online = false;
-    tick_all();
+    tickAll();
     robot_machine.update();
-    assert(robot_machine.isActive<Fault>());
-    tick_all();
-    assert(!test_motor.enabled);
-    std::cout << "PASS: guard rejects non-running participants, cancellation and start failure are handled before TestRunning\n";
-
-    assert(robot_machine.immediateChangeTo<UniversalManual>() ==
-           M::TransitionResult::RejectedByEntryGuard);
-    assert(robot_machine.isActive<Fault>());
-    tick_all();
-    assert(!test_motor.enabled && !extra_subsystem.output);
-    std::cout << "PASS: UniversalManual guard rejects entry without running participants\n";
-
-    // 正式分支中第二个请求被拒绝，同一次状态机更新必须进入 Fault 撤销全部请求。
+    tickAll();
+    robot_context.recovery_requested.store(true);
+    robot_machine.update();
+    assert(robot_machine.isActive<Recovering>());
+    rtos::clock_ms += 60000;
+    tickAll();
+    robot_machine.update();
+    assert(robot_machine.isActive<Recovering>() && !test_subsystem.hasFailed());
     test_motor.online = true;
+    invalid_output = true;
+    tickAll();
+    invalid_output = false;
+    robot_machine.update();
+    assert(robot_machine.isActive<Fault>() && !robot_context.recovery_requested.load());
+    tickAll();
+    for (unsigned i = 0; i < 3; ++i) robot_machine.update();
+    assert(robot_machine.isActive<Fault>() && test_subsystem.state() == SubsystemState::Disabled);
+    robot_context.recovery_requested.store(true);
+    robot_machine.update();
+    reach<TestRunning>();
+    std::cout << "PASS: offline recovery waits, failed recovery resets authorization and latches Fault\n";
+
     extra_subsystem.online = true;
-    extra_subsystem.ready = true;
     robot_machine.immediateChangeTo<Starting>();
-    robot_machine.update();
-    tick_all();
-    assert(test_subsystem.isReady() && extra_subsystem.isReady());
-    assert(extra_subsystem.requestRun());
-    robot_machine.update();
-    assert(robot_machine.isActive<Fault>());
-    assert(test_subsystem.startupStatus() == Status::Disabling);
-    assert(extra_subsystem.startupStatus() == Status::Disabling);
-    tick_all();
-    assert(!test_motor.enabled && !extra_subsystem.output);
-
-    // 接受运行请求后异步失败，也不能先进入 UniversalManual。
+    reach<UniversalManual>();
+    const auto healthy_pid_inits = pid_init_count;
     robot_machine.immediateChangeTo<Starting>();
+    tickAll();
+    assert(test_subsystem.isStandby() && extra_subsystem.isStandby());
+    assert(extra_subsystem.requestRun()); // Simulate a refused second run submission.
     robot_machine.update();
-    tick_all();
+    assert(robot_machine.isActive<Fault>() && robot_context.faults[1] == Reason::RunRejected);
+    tickAll();
+    assert(test_subsystem.isStandby() && extra_subsystem.state() == SubsystemState::Disabled);
+    robot_context.recovery_requested.store(true);
     robot_machine.update();
+    tickAll();
+    robot_machine.update(); // Both run requests accepted, not yet executed.
+    assert(robot_machine.isActive<Recovering>());
     extra_subsystem.run_success = false;
-    tick_all();
-    assert(test_subsystem.isRunning() && extra_subsystem.hasFailed());
+    tickAll();
     robot_machine.update();
-    assert(robot_machine.isActive<Fault>());
-    assert(test_subsystem.startupStatus() == Status::Disabling);
-    tick_all();
-    assert(!test_motor.enabled && !extra_subsystem.output);
-    std::cout << "PASS: normal startup rejection and asynchronous failure enter Fault before business\n";
+    assert(robot_machine.isActive<Fault>() && !robot_context.recovery_requested.load());
+    assert(robot_context.faults[1] != Reason::None);
+    extra_subsystem.run_success = true;
+    tickAll();
+    robot_context.recovery_requested.store(true);
+    robot_machine.update();
+    reach<UniversalManual>();
+    assert(pid_init_count == healthy_pid_inits);
+    std::cout << "PASS: rejected run and asynchronous recovery failure return to Fault without resetting healthy peers\n";
+
+    // A new failure while waiting in Fault must retain the earlier disabled subject.
+    test_motor.online = false;
+    tickAll();
+    robot_machine.update();
+    tickAll();
+    extra_subsystem.run_success = false;
+    tickAll();
+    robot_context.recovery_requested.store(true);
+    robot_machine.update();
+    assert(robot_machine.isActive<Fault>() && !robot_context.recovery_requested.load());
+    tickAll();
+    assert(test_subsystem.state() == SubsystemState::Disabled && extra_subsystem.state() == SubsystemState::Disabled);
+    assert(robot_context.faults[0] != Reason::None && robot_context.faults[1] != Reason::None);
+    test_motor.online = true;
+    extra_subsystem.run_success = true;
+    robot_context.recovery_requested.store(true);
+    robot_machine.update();
+    reach<UniversalManual>();
+    robot_machine.immediateChangeTo<Fault>(); // Unknown whole-robot fault defaults to all disabled.
+    tickAll();
+    assert(test_subsystem.state() == SubsystemState::Disabled && extra_subsystem.state() == SubsystemState::Disabled);
+    assert(robot_context.faults[0] == Reason::Unspecified && robot_context.faults[1] == Reason::Unspecified);
+    robot_context.recovery_requested.store(true);
+    robot_machine.update();
+    reach<UniversalManual>();
+    std::cout << "PASS: new Fault subjects remain isolated until recovery, unknown faults disable all\n";
 }

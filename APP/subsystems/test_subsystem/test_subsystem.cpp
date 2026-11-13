@@ -29,7 +29,7 @@ bool TestSubsystem::setTargetSpeed(float speed) {
     // 为子系统业务功能要用到的数据添加临界区保护
     taskENTER_CRITICAL();
     // 待机、禁用和准备期间不接受测试任务遗留的速度目标。
-    const bool running = isRunning();
+    const bool running = acceptsCommands();
     if (running) {
         target_speed_ = speed;
     }
@@ -45,14 +45,7 @@ void TestSubsystem::onPrepare() {
     speed_pid_.init();
 }
 
-Subsystem::Readiness TestSubsystem::onStandby(bool entering) {
-    if (entering) {
-        speed_pid_.init();
-    }
-    if (onCheckReadiness() != Readiness::Ready) {
-        (void)onRun(false);
-        return Readiness::Pending;
-    }
+Subsystem::Readiness TestSubsystem::onStandby(bool) {
     return onRun(true) ? Readiness::Ready : Readiness::Failed;
 }
 

@@ -8,12 +8,6 @@ namespace robot {
 
 struct Starting : M::State {
     HFSM_STATE_CALLBACKS_WITH_BASE(M);
-};
-struct WaitPower : M::State {
-    HFSM_STATE_CALLBACKS_WITH_BASE(M);
-};
-struct PrepareSubsystems : M::State {
-    HFSM_STATE_CALLBACKS_WITH_BASE(M);
 
 private:
     enum class Phase { Preparing, WaitingRunning };
@@ -49,12 +43,6 @@ struct Test : M::State {
 };
 struct TestStarting : M::State {
     HFSM_STATE_CALLBACKS_WITH_BASE(M);
-};
-struct TestWaitPower : M::State {
-    HFSM_STATE_CALLBACKS_WITH_BASE(M);
-};
-struct PrepareTestSubsystems : M::State {
-    HFSM_STATE_CALLBACKS_WITH_BASE(M);
 
 private:
     enum class Phase { Preparing, WaitingRunning };
@@ -70,7 +58,19 @@ private:
     std::uint32_t speed_phase_started_ms_{0};
 };
 struct Fault : M::State {
+    void exitGuard(GuardControl& control);
     HFSM_STATE_CALLBACKS_WITH_BASE(M);
+
+private:
+    bool reentering_{false};
+};
+struct Recovering : M::State {
+    void entryGuard(GuardControl& control);
+    HFSM_STATE_CALLBACKS_WITH_BASE(M);
+
+private:
+    enum class Phase { Preparing, WaitingRunning };
+    Phase phase_{Phase::Preparing};
 };
 
 }

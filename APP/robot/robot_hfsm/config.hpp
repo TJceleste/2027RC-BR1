@@ -7,8 +7,6 @@ struct Robot_Context;
 
 struct Disable;
 struct Starting;
-struct WaitPower;
-struct PrepareSubsystems;
 struct Enable;
 struct Manual;
 struct UniversalManual;
@@ -18,14 +16,12 @@ struct DevelopingAuto;
 struct Paused;
 struct Test;
 struct TestStarting;
-struct TestWaitPower;
-struct PrepareTestSubsystems;
 struct TestRunning;
 struct Fault;
-using StateList = hfsm::TypeList<Disable, Starting, WaitPower, PrepareSubsystems,
+struct Recovering;
+using StateList = hfsm::TypeList<Disable, Starting,
                     Enable, Manual, UniversalManual, Auto, WaitUpperComputer,
-                    DevelopingAuto, Paused, Test, TestStarting, TestWaitPower,
-                    PrepareTestSubsystems, TestRunning, Fault>;
+                    DevelopingAuto, Paused, Test, TestStarting, TestRunning, Fault, Recovering>;
 using M = hfsm::MachineT<Robot_Context, StateList>;
 using Control = M::Control;
 using GuardControl = M::GuardControl;

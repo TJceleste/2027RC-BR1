@@ -17,6 +17,7 @@
 #include "test_subsystem.hpp"
 
 #include <array>
+#include <atomic>
 
 namespace robot {
 
@@ -43,7 +44,7 @@ inline C620 can1_c620{can1_bus};
 inline C620Motor test_motor{can1_c620, 1};
 inline TestSubsystem test_subsystem{test_motor};
 
-// 全部子系统的注册表，也是正式启动集合；Fault 统一禁用此集合。
+// 全部子系统的注册表，也是正式启动集合；Fault 按故障记录选择禁用对象。
 // 各控制任务仍负责调用 periodic()。
 inline const std::array<Subsystem*, 1> subsystems{&test_subsystem};
 
@@ -77,16 +78,23 @@ inline void init() {
 }
 
 struct Robot_Context {
-    int context_example{0};
+    enum class RecoveryMode { Manual, Test };
+    enum class FaultReason { None, SubsystemFailed, RunRejected, Unspecified };
+
+    RecoveryMode recovery_mode{RecoveryMode::Manual};
+    // 进入 Fault 前记录请求拒绝等不会直接改变子系统状态的故障。
+    Subsystem* pending_fault_source{nullptr};
+    FaultReason pending_fault_reason{FaultReason::None};
+    std::array<FaultReason, subsystems.size()> faults{};
+    // 预留给操作员/上位机恢复命令。唯一可由其他任务直接修改的上下文字段。
+    // 每次进入 Fault 清零；显式置 true 后才允许离开 Fault，离开时消费。
+    std::atomic<bool> recovery_requested{false};
 };
 
 using Tree = M::PeerRoot<
     M::Leaf< Disable >,
     M::Composite< Enable,
-        M::Composite< Starting,
-            M::Leaf< WaitPower >,
-            M::Leaf< PrepareSubsystems >
-        >,
+        M::Leaf< Starting >,
         M::Composite< Manual,
             M::Leaf< UniversalManual >
         >,
@@ -97,13 +105,11 @@ using Tree = M::PeerRoot<
         >
     >,
     M::Composite< Test,
-        M::Composite< TestStarting,
-            M::Leaf< TestWaitPower >,
-            M::Leaf< PrepareTestSubsystems >
-        >,
+        M::Leaf< TestStarting >,
         M::Leaf< TestRunning >
     >,
-    M::Leaf< Fault >
+    M::Leaf< Fault >,
+    M::Leaf< Recovering >
 >;
 
 inline Robot_Context robot_context{};

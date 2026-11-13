@@ -1,76 +1,58 @@
 # Subsystem
 
-`Subsystem` 是所有业务子系统共用的生命周期基类。状态机通过 `Subsystem*` 统一发出待机、准备、运行和禁用请求，控制任务通过 `periodic()` 推进各自子系统；设备与 PID 细节由派生类实现。
-
-## 公共接口
+`Subsystem` 管理五个状态：`Disabled / Preparing / Standby / Running / Failed`。每个子系统由自己的控制任务调用 `periodic()`，独立等待设备上线、建立运行条件并进入待机；整机只协调所需集合的待机及运行结果。
 
 | 接口 | 含义 |
 | --- | --- |
-| `requestStandby()` | 请求独立待机并清除旧业务目标；重复请求不重启待机，`Failed` 时拒绝，返回是否接受 |
-| `requestPrepare()` | 开始新一轮准备，立即清除旧就绪结果和业务目标 |
-| `requestRun()` | 仅在 `Ready` 时接受运行请求，返回是否接受 |
-| `requestDisable()` | 撤销当前请求、清空业务目标，异步关闭输出；再次运行需重新准备 |
-| `startupStatus()` | 原子读取当前生命周期状态 |
-| `isStandby()` / `isReady()` / `isRunning()` / `hasFailed()` | 分别判断是否处于 `Standby` / `Ready` / `Running` / `Failed` |
-| `isOnline()` | 查询所需设备的反馈是否在线，不发起准备、不启动超时；由派生类实现同步读取 |
-| `periodic()` | 由一个固定控制任务周期调用，推进准备和运行，提交本轮输出 |
+| `requestPrepare()` | 显式开始一轮准备，也用于修复后的恢复；清除旧业务目标 |
+| `requestStandby()` | 返回待机，复用有效准备结果；未准备时自行等待上线并准备；重复请求不重置，Failed 时拒绝 |
+| `requestRun()` | 仅在 Standby 且无其他未处理请求时接受运行，返回是否接受 |
+| `requestDisable()` | 立即撤销业务写入权限，异步关闭输出并使准备结果失效 |
+| `state()` | 原子读取当前状态 |
+| `isStandby() / isRunning() / hasFailed()` | 对当前状态的便捷查询 |
 
 ```text
-Idle --requestPrepare--> Preparing --就绪--> Ready --requestRun--> Running
-                              |               |                      |
-                           超时/失败        失去就绪条件             运行失败
-                              +---------------+----------------------+--> Failed
-
-任意状态 --requestDisable--> Disabling --periodic--> Idle
-Failed --requestPrepare--> Preparing
-
-非 Failed 状态 --requestStandby--> EnteringStandby --待机完成--> Standby
-                                      ^                         |
-                                      +-------- 离线 -----------+
+Disabled --requestPrepare/requestStandby--> Preparing --准备及待机完成--> Standby
+Running  --requestStandby---------------> Preparing --返回待机完成----> Standby
+Standby  --requestRun（接受后由控制任务执行）--------------------------> Running
+准备/待机/运行失败 -------------------------------------------------> Failed
+任意状态 --requestDisable（控制任务执行关闭）------------------------> Disabled
+Failed   --requestPrepare-------------------------------------------> Preparing
 ```
 
-`Ready` 表示可开始运行，实际输出仍禁用。准备超时默认 5000 ms，派生类可通过 `Subsystem(timeout_ms)` 调整。超时从控制任务开始处理该轮准备时计时；准备完成与超时在同一轮发生时，优先接受就绪。失败不会自动恢复，需要重新准备。
+Preparing 同时表示等待上线、实际准备和进入待机。等待上线不计时；首次上线开始实际准备后，默认 5000 ms 内必须完成准备和进入待机，超时进入 Failed。同周期完成时优先接受完成结果。待机中掉线会关闭输出、返回 Preparing，重新上线后重建必要条件；运行中掉线保持 Failed，不会自行恢复。
 
-禁用不是暂停，不提供直接恢复运行的路径。`requestDisable()` 保留原有的 `onRequestReset()` 调用，默认回调不处理；派生类可清空业务目标。控制任务处理禁用后进入 `Idle`，再次运行必须经过 `requestPrepare()` 和 `requestRun()`。
+请求非阻塞，返回接受不代表执行完成。requestRun 接受后仍可能暂时查询到 Standby；requestDisable 发出后也可能暂时查询到 Running，直到控制任务关闭输出后才发布 Disabled。业务目标写入必须在短临界区内通过受保护的 `acceptsCommands()` 检查授权，避免把未处理的禁用请求当成仍可写目标。
 
-待机独立于准备，可在其他子系统尚未上线时执行，不计准备超时。待机前仍检查本子系统的 `isOnline()`；离线时关闭输出并等待，上线后重新开始待机。待机回调失败会保持 `Failed`，不能用重复待机请求清除故障。`Standby` 表示已达到派生类定义的待机条件，不表示 `Ready` 或 `Running`；正式运行仍需重新准备。
+## 派生类回调
 
-## 派生类实现
+| 回调 | 职责 |
+| --- | --- |
+| `isOnline()` | 受保护的设备反馈查询；由子系统内部使用，整机不检查在线 |
+| `onRequestReset()` | 请求方短临界区内清除旧目标；不得阻塞、操作硬件或调用生命周期请求 |
+| `onPrepare()` | 上线后开始实际准备时调用一次；正常返回待机不重复初始化 |
+| `onCheckReadiness()` | 推进必要准备步骤、检查运行条件，返回 Pending / Ready / Failed |
+| `onStandby(entering)` | 条件建立后推进进入/保持待机；首次调用 entering=true；默认关闭输出并完成待机 |
+| `onRun(enabled)` | 执行业务控制；enabled=false 时必须关闭并清空输出 |
 
-| 回调 | 所在线程与同步 | 职责 |
-| --- | --- | --- |
-| `onRequestReset()` | 请求方，短临界区内 | 清空业务目标；默认不处理 |
-| `onPrepare()` | 控制任务，临界区外 | 每轮准备调用一次，复位本地控制器；默认不处理 |
-| `onStandby(entering)` | 控制任务，临界区外，每个在线周期调用 | 执行待机策略，返回 `Pending` / `Ready` / `Failed`；首次执行 `entering` 为 true，可初始化待机控制器；默认关闭输出并报告待机 |
-| `onCheckReadiness()` | 控制任务，临界区外 | 返回 `Pending` / `Ready` / `Failed`；必要时推进非阻塞准备步骤 |
-| `onRun(enabled)` | 控制任务，临界区外，每周期调用 | 允许时计算并应用输出，否则关闭并清空输出；运行失败时自行关闭输出并返回 `false` |
+所有回调须及时返回。准备步骤可执行所需受控动作，待机步骤可持续保持输出；派生类负责反馈、控制目标及硬件输出的同步。控制任务负责初始化、计算和输出，请求方不得执行这些工作。计算期间到达新请求时，本轮仍可能产生一次旧输出；请求轮次和模式核对防止旧状态覆盖新请求状态。
 
-`onCheckReadiness()` 在准备、就绪和运行期间调用。准备期间 `Pending` 表示继续等待，`Failed` 可立即终止；就绪或运行期间必须保持 `Ready`，否则报告失败。
+`TestSubsystem` 在上电前保持 Preparing，上线后初始化一次 PID，以零速度闭环进入 Standby；正常运行后返回待机不会重复初始化 PID。此示例的 Standby 表示零速度保持策略已执行，不额外等待实测速度阈值。
 
-所有回调必须及时返回。运行计算和输出放在 `onRun(enabled)`；待机输出由 `onStandby(entering)` 管理，可复用运行输出逻辑。局部设备保护由派生类维护；临界区回调不得阻塞、操作耗时设备或调用请求接口。准备与就绪检查期间保持输出禁用，不能在这些回调里直接使能输出。主动待机必须独立初始化所需控制器，不能依赖先执行 `onPrepare()`。派生类自行同步设备反馈、业务目标等共享数据。对象生命周期必须覆盖所有访问任务，不支持运行期间销毁。
+## 整机集成及恢复
 
-请求轮次与模式由基类统一管理。计算期间到达禁用或重新准备请求时，本轮仍可能应用旧请求的输出，后续周期读取新请求后关闭输出；基类只在状态发布前核对请求，避免旧状态覆盖新请求发布的状态。生命周期接口为非虚函数，派生类只覆盖回调，不重写公共流程。
+`robot::subsystems` 是完整注册表，`test_subsystems` 必须是它的子集。Starting / TestStarting 对所需集合发起一次准备或返回待机请求，等待全部 Standby，再提交一次运行请求并等待实际 Running。不存在整机等待全部上线后才统一初始化的屏障。
 
-## 整机接入
+Fault 先记录来源，再禁用故障子系统并请求健康子系统待机；无明确来源的整机故障默认全部禁用。Fault 是整机唯一调用 requestDisable 的位置。恢复标志位授权后进入同级 Recovering，重新准备 Disabled / Failed 子系统，复用健康子系统的待机条件；修复对象及目标业务集合满足条件后，再请求业务集合运行。恢复失败返回 Fault，需重新授权。
 
-在 `robot.hpp` 的 `robot::subsystems` 注册表中加入派生类对象指针后，`Starting` 首先进入 `WaitPower`，遍历全部子系统，为已在线的子系统请求待机，继续等待其他子系统上线。按当前约定，等待大电即等待所需电机反馈上线；这一阶段没有超时，也不调用 `requestPrepare()`，待机失败则进入 `Fault`。全部在线后进入 `PrepareSubsystems`，发起准备并检查全部就绪，再提交一次运行请求并等待全部实际 `Running`。`UniversalManual` 的入口保护确认运行条件，进入与退出均不发起生命周期请求。
+测试集合之外的健康子系统自行待机，离线等待不阻塞测试启动或恢复。自动任务的检查点和进度恢复仍属于业务层，当前恢复目标为 UniversalManual 或重新开始速度序列的 TestRunning。
 
-`TestStarting` 只等待并启动 `robot::test_subsystems`，该集合必须是 `robot::subsystems` 的子集。对应路径为 `TestWaitPower → PrepareTestSubsystems → TestRunning`：`TestWaitPower` 同样为已在线的子系统请求待机；全部上线后，在 `PrepareTestSubsystems` 中完成准备、提交一次运行请求并等待全部实际运行，再由入口保护确认 `Running` 后进入测试业务。进入 `Test` 时，集合外的子系统统一收到待机请求，防止继续执行原模式目标；它们无需在线，也不参与测试准备和运行确认，离线后上线会自行待机。两个等待状态以各自集合全部在线为切换条件，不等待全部 `isStandby()`，进一步的待机到位协调应由整机准备流程负责。
+## 主机验证
 
-`Fault::enter()` 是整机层唯一提交禁用请求的位置，统一禁用 `robot::subsystems` 中的全部子系统。两个准备状态请求运行失败时，本轮就进入 `Fault` 撤销已接受的请求，异步启动失败同样在进入业务前转入故障。普通模式及父状态的退出回调不再禁用，正常模式切换经目的模式的启动流程接管。
-
-`isOnline()` 与 `isReady()` 分别表达设备反馈可用和运行前准备完成。多设备子系统应检查全部必需设备；不依赖外设的子系统可返回 `true`。在线查询必须及时返回、不改变生命周期，必要的反馈接收或探测应由底层通信任务持续执行，不能依赖 `prepare` 才开始接收。
-
-各子系统仍由自己的控制任务按所需频率调用 `periodic()`；列表不负责创建任务或决定调度频率。只有进入准备阶段后，子系统才开始自身准备超时。等待阶段始终无反馈会持续等待；开始准备后发生失败或超时，仍按原有逻辑进入 `Fault`。
-
-`TestSubsystem` 是单电机示例：待机时初始化速度控制器并以零速度闭环保持，重复待机请求不重复初始化。业务接口为 `setTargetSpeed()`，只在 `Running` 接受目标。
-
-## 主机测试
-
-安装 Python 3 和主机 C++23 编译器后，在项目根目录执行：
+在项目根目录执行：
 
 ```sh
 python MODULE/subsystem/host_tests/run_host_tests.py
 ```
 
-可用 `CXX` 环境变量指定编译器可执行文件。测试使用模拟时间、设备与 PID，直接编译实际基类、测试子系统及 HFSM 状态实现，检查生命周期、新请求的延后执行与状态保护，以及多子系统协调；不替代上板验证。
+可用 CXX 指定主机 C++23 编译器。测试编译实际子系统、状态树及状态实现，使用模拟反馈和时钟验证独立启动、准备超时、模式交接、选择性故障处置、恢复授权和恢复失败；不替代上板验证。

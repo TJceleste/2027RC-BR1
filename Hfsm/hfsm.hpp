@@ -151,7 +151,7 @@ struct MachineT {
 
         template <typename T>
         bool isActive() const { return core_.active[stateId<T>()]; }
-
+        // 在guard中调用即可取消当前转换请求
         void cancelPendingTransitions() { cancelled_ = true; }
         bool isCancelled() const { return cancelled_; }
 

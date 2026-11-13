@@ -10,7 +10,9 @@ void robot::UniversalManual::entryGuard(robot::GuardControl& control) {
     }
 }
 
-void robot::UniversalManual::enter() {}
+void robot::UniversalManual::enter() {
+    robot_context.faults.fill(Robot_Context::FaultReason::None);
+}
 
 void robot::UniversalManual::update(robot::Control& control) {
     for (const auto* subsystem : subsystems) {

@@ -1,40 +1,43 @@
-# 启动阶段与等待大电
-
-当前以所需电机反馈在线作为大电就绪条件，没有接入电压采样或独立的电源确认输入。小电启动后，通信任务、上位机通信和状态机继续运行，等待过程不阻塞任务。
+# 启动和故障恢复
 
 ```text
-Enable
-├─ Starting
-│  ├─ WaitPower             等待 subsystems 中全部设备在线
-│  └─ PrepareSubsystems     准备全部子系统，请求运行并等待全部 Running
-└─ Manual
-   └─ UniversalManual       检查运行条件后进入，执行手动业务
-
-Test
-├─ TestStarting
-│  ├─ TestWaitPower         只等待 test_subsystems 中设备在线
-│  └─ PrepareTestSubsystems 准备该集合，请求运行并等待全部 Running
-└─ TestRunning              检查运行条件后进入，周期设置测试速度目标
+PeerRoot
+├─ Disable                         开发入口，自动进入 TestStarting
+├─ Enable
+│  ├─ Starting                     独立准备、等待全部待机、请求运行并确认
+│  ├─ Manual / UniversalManual      正式业务
+│  └─ Auto                         保留原有自动分支
+├─ Test
+│  ├─ TestStarting                 仅准备并启动 test_subsystems
+│  └─ TestRunning                  每 3 秒切换测试电机速度
+├─ Fault                           记录故障、选择性禁用、等待显式恢复请求
+└─ Recovering                      修复对象重新准备，确认运行后返回业务
 ```
 
-两个等待状态进入及更新时遍历对应集合，通过 `Subsystem::isOnline()` 判断设备上线，为已在线的子系统请求 `requestStandby()`，并继续检查其余子系统，不因前面的设备离线而提前返回。待机由各自控制任务异步执行，重复请求不重新初始化；`TestSubsystem` 待机为零速度闭环。未上线的设备持续等待，不发起准备、不累计设备准备超时；已经请求待机的设备掉线时关闭输出，重新上线后重新进入待机。待机失败则进入 `Fault`。
+Starting 和 TestStarting 均包含“等待待机”和“等待实际运行”两个阶段。进入时，Disabled / Failed 子系统收到 requestPrepare，其余子系统收到 requestStandby，以复用仍有效的运行条件。各控制任务独立等待上线、准备到 Standby；先完成的机构持续待机。全部待机后只提交一次 requestRun，全部实际 Running 后进入业务状态。准备、运行请求拒绝或异步运行失败都在业务开始前转入 Fault。
 
-全部设备在线后即进入准备阶段，不额外等待全部 `isStandby()`；准备流程可以继续协调具体机构的待机到位动作。在线查询本身仍无初始化副作用，在线机构的待机控制器初始化只发生在控制任务处理待机请求时。
+原 WaitPower、TestWaitPower 和两组准备子状态已移除。设备反馈在线属于子系统内部事实，等待人工接大电不计准备超时；上线开始实际准备后才计时。准备包含进入待机，允许执行所需受控动作。
 
-准备阶段继续使用子系统已有的超时与失败处理。正式分支在 `PrepareSubsystems` 内完成实际启动，测试分支在 `PrepareTestSubsystems` 内完成实际启动。待机、禁用和准备请求仍由各子系统的控制任务异步执行，通信任务持续收发反馈与当前输出命令。
+UniversalManual 和 TestRunning 的 entryGuard 只确认所需集合全部 Running，enter 不再发起运行请求。TestRunning 保持原有 10 → 0 → -10 → 0 rad/s 的三秒速度序列，重新进入会从头开始。模式及父状态退出均不禁用。
 
-`PrepareSubsystems` 和 `PrepareTestSubsystems` 都分为等待 `Ready` 与等待 `Running` 两阶段。各自集合全部 `Ready` 后只提交一次 `requestRun()`，任意请求被拒绝就在本轮状态机更新中进入 `Fault`，由其统一禁用；请求接受后等待各控制任务实际发布 `Running`，等待期间不重复请求。参与启动的任意子系统失败也进入 `Fault`。
+subsystems 是全部子系统注册表，test_subsystems 必须是子集。Test::enter 为集合外子系统请求待机，撤销原模式目标；它们离线时等待，上线后自行准备到待机，不阻塞测试。正常模式切换分别经 Starting / TestStarting 接管。
 
-`TestRunning::entryGuard()` 只检查全部测试子系统是否 `Running`，不发起启停操作；未满足条件时取消进入、保持原状态。`enter()` 只初始化业务，不再请求运行或保存启动失败标志。实际运行请求已在前一个状态中提交，进入测试业务前子系统可能已按零目标执行闭环。
+## Fault 和恢复入口
 
-`UniversalManual::entryGuard()` 同样只检查全部正式子系统是否 `Running`；`enter()` 不再发起运行请求，也不保存请求结果，运行期间在 `update()` 检查故障。直接进入业务状态不能绕过启动条件。
+Robot_Context 保存恢复目标、故障对象对应的 faults 记录，以及不会直接改变子系统状态的运行请求拒绝来源。Fault::enter 首先保存来源，再禁用故障对象；健康对象收到待机请求。不明来源的整机故障默认禁用全部。故障记录在本轮业务成功进入前保留，新增故障重入 Fault 不会让之前禁用的机构自动启动。
 
-`TestRunning::update()` 持续检查运行故障，并以时间戳推进 `10 → 0 → -10 → 0 rad/s`，每段保持 3 秒；`exit()` 只停止速度序列，不请求禁用，也不改变当前速度目标。`UniversalManual::exit()`、`Test::exit()` 和 `Enable::exit()` 均不请求禁用，由目的状态接管业务目标。重新启动经 `TestStarting` 再走准备和启动确认流程，进入后重置速度序列。速度测试只在此状态执行，底层子系统任务继续每 1 tick 执行闭环，不再创建独立的速度切换任务。
+离开 Fault 的输入预留为：
 
-`subsystems` 是在 `robot.hpp` 显式维护的全部子系统注册表，`test_subsystems` 必须是它的子集。进入 `Test` 时，`Test::enter()` 为测试集合之外的全部子系统提交待机请求，撤销原模式目标；离线机构上线后由各自控制任务进入待机，不作为测试启动条件，也不为它们发起准备或运行请求。测试集合内部仍由 `TestWaitPower` 和 `PrepareTestSubsystems` 接管。正式与测试模式之间的切换应分别经过 `Starting` 和 `TestStarting`。
+```cpp
+robot::robot_context.recovery_requested.store(true);
+```
 
-整机层的 `requestDisable()` 只在 `Fault::enter()` 调用，统一覆盖 `subsystems` 注册表；启动失败不再在各状态中分散回滚。故障状态进入后即提交禁用请求，实际关闭由各控制任务异步完成。需要取消启动并撤销已提交请求时，切换到 `Fault`；正常切换不依赖退出回调禁用。
+该原子标志位默认 false。Fault::update 检查显式请求及故障对象已完成禁用后，才转入 Recovering；Fault::exitGuard 同时阻止未授权的直接状态切换。每次进入 Fault 都清零标志，离开时消费标志；恢复失败后必须重新置位。设备重新在线不会自动离开 Fault。其他上下文字段仅由状态机所属任务访问，未来可从遥控、上位机或调试入口设置这个标志。
 
-多电机子系统的 `isOnline()` 应覆盖本次所需电机；纯软件子系统可返回 `true`。等待阶段无法仅凭无反馈区分未接大电与设备异常，因此不会自行报准备超时。
+Recovering 是 Fault 的同级状态，只接受从已授权 Fault 进入。进入时对 Disabled / Failed 对象请求准备，健康对象继续待机。恢复对象和目标业务集合都到 Standby 后，只请求目标业务集合运行，等待全部 Running 后返回 UniversalManual 或 TestRunning；集合外健康离线对象不作为恢复屏障。运行拒绝或恢复失败重新进入 Fault，执行故障处置并清除恢复授权。
 
-当前保持 `Disable::update()` 自动进入 `TestStarting` 的开发流程，`Disable` 仍是开发启动入口。测试模式位于 `Enable` 外；这里没有调整整机模式层级、增加故障恢复或遥控使能策略。
+当前不实现自动任务检查点继续执行；正式恢复回到 UniversalManual，测试恢复重新开始速度序列。整机 Disable 仍是开发启动入口，不是故障解除或急停入口。
+
+## 验证
+
+主机测试覆盖独立上线、准备和待机超时、真实 Running 确认、正式与测试模式交接、故障对象隔离、健康对象不重复准备、显式恢复授权、恢复重试及未知故障全部禁用。
