@@ -71,18 +71,24 @@ int main() {
     robot_machine.update();
     assert(robot_machine.isActive<Recovering>() && !extra_subsystem.hasFailed());
     extra_subsystem.online = true;
-    tickAll(); // Preparation timer starts here, rather than at recovery entry.
-    rtos::clock_ms += 5000;
+    tickAll();
+    rtos::clock_ms += 60000;
+    tickAll();
+    robot_machine.update();
+    assert(robot_machine.isActive<Recovering>() && extra_subsystem.state() == SubsystemState::Preparing);
+    assert(!robot_context.recovery_requested.load());
+    extra_subsystem.ready = true;
+    extra_subsystem.run_success = false;
     tickAll();
     robot_machine.update();
     assert(robot_machine.isActive<Fault>() && !robot_context.recovery_requested.load());
+    extra_subsystem.run_success = true;
     tickAll();
-    extra_subsystem.ready = true;
     robot_context.recovery_requested.store(true);
     robot_machine.update();
     reach<TestRunning>();
     assert(test_subsystem.isRunning() && extra_subsystem.isRunning());
-    std::cout << "PASS: repaired participant must finish preparation, timeout requires a fresh recovery flag\n";
+    std::cout << "PASS: recovery preparation has no timeout, callback failure requires a fresh recovery flag\n";
 
     robot_machine.immediateChangeTo<TestStarting>();
     tickAll();

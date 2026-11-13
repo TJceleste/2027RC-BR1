@@ -8,7 +8,6 @@
 
 class ProbeSubsystem final : public Subsystem {
 public:
-    ProbeSubsystem() : Subsystem(10) {}
     bool online{false};
     bool ready{false};
     bool broken{false};
@@ -62,12 +61,13 @@ int main() {
     probe.online = true;
     probe.periodic();
     assert(probe.prepares == 1 && probe.state() == State::Preparing);
-    rtos::clock_ms += 9;
+    rtos::clock_ms += 60000;
     probe.periodic();
-    assert(!probe.hasFailed());
-    ++rtos::clock_ms;
+    assert(probe.state() == State::Preparing && probe.prepares == 1 && !probe.output);
+    probe.broken = true;
     probe.periodic();
     assert(probe.hasFailed() && !probe.output);
+    probe.broken = false;
     probe.ready = true;
     assert(!probe.requestStandby());
     probe.periodic();
@@ -86,7 +86,7 @@ int main() {
     assert(probe.requestStandby());
     probe.periodic();
     assert(probe.standby_entries == entries && probe.prepares == 2);
-    std::cout << "PASS: independent online wait, timed preparation, standby and run acknowledgement\n";
+    std::cout << "PASS: independent online wait, untimed preparation, explicit failure and run acknowledgement\n";
 
     probe.online = false;
     probe.periodic();
@@ -167,20 +167,31 @@ int main() {
     probe.requestPrepare();
     probe.periodic();
     assert(probe.state() == State::Preparing && probe.output);
-    rtos::clock_ms += 9;
+    const auto pending_entries = probe.standby_entries;
+    const auto pending_prepares = probe.prepares;
+    rtos::clock_ms += 60000;
     probe.periodic();
-    assert(!probe.hasFailed());
-    ++rtos::clock_ms;
-    probe.periodic();
-    assert(probe.hasFailed() && !probe.output);
+    assert(probe.state() == State::Preparing && probe.output);
+    assert(probe.standby_entries == pending_entries && probe.prepares == pending_prepares);
     probe.standby_ready = true;
-    probe.requestPrepare();
     probe.periodic();
+    assert(probe.isStandby());
+    rtos::clock_ms += 60000;
+    probe.standby_ready = false;
+    probe.periodic();
+    assert(probe.state() == State::Preparing && probe.output);
+    rtos::clock_ms += 60000;
+    probe.periodic();
+    assert(probe.state() == State::Preparing && probe.output);
+    assert(probe.standby_entries == pending_entries && probe.prepares == pending_prepares);
+    probe.standby_ready = true;
+    probe.periodic();
+    assert(probe.isStandby());
     assert(probe.requestRun());
     probe.run_success = false;
     probe.periodic();
     assert(probe.hasFailed() && !probe.output);
-    std::cout << "PASS: controlled standby motion, preparation timeout wrap and output failure\n";
+    std::cout << "PASS: standby pending has no timeout before or after ready, output failures still latch\n";
 
     C620Motor motor;
     robot::TestSubsystem subsystem(motor);

@@ -2,9 +2,6 @@
 
 #include "rtos_utility.hpp"
 
-Subsystem::Subsystem(std::uint32_t preparation_timeout_ms) noexcept
-    : preparation_timeout_ms_(preparation_timeout_ms) {}
-
 void Subsystem::requestPrepare() {
     taskENTER_CRITICAL();
     ++latest_request_.generation;
@@ -68,8 +65,6 @@ void Subsystem::periodic() {
     taskENTER_CRITICAL();
     request = latest_request_;
     taskEXIT_CRITICAL();
-    const auto now = rtos::now_ms();
-
     if (request.generation != active_generation_) {
         active_generation_ = request.generation;
         preparation_started_ = false;
@@ -90,7 +85,7 @@ void Subsystem::periodic() {
             // 已建立运行条件后，进入/保持待机时掉线同样需要显式恢复。
             phase_ = State::Failed;
         } else {
-            // 尚未建立运行条件时允许等待上线，不计准备超时。
+            // 尚未建立运行条件时允许等待上线。
             phase_ = State::Preparing;
             prepared_ = false;
             preparation_started_ = false;
@@ -99,7 +94,6 @@ void Subsystem::periodic() {
     } else {
         if (!preparation_started_) {
             preparation_started_ = true;
-            preparation_started_ms_ = now;
             if (!prepared_) onPrepare();
         }
 
@@ -120,12 +114,6 @@ void Subsystem::periodic() {
             }
         }
 
-        // 计时覆盖实际准备和进入待机；同周期完成时优先接受完成结果。
-        if (phase_ == State::Preparing &&
-            static_cast<std::uint32_t>(now - preparation_started_ms_) >=
-                preparation_timeout_ms_) {
-            phase_ = State::Failed;
-        }
         if (phase_ == State::Failed) (void)onRun(false);
     }
 

@@ -17,7 +17,7 @@ public:
     Subsystem(Subsystem&&) = delete;
     Subsystem& operator=(Subsystem&&) = delete;
 
-    // 显式开始新一轮准备，也用于故障恢复。离线等待不计准备超时。
+    // 显式开始新一轮准备，也用于故障恢复；基类不限制准备时长。
     void requestPrepare();
     // 返回待机，复用有效准备结果；重复请求不重置，Failed 时拒绝。
     [[nodiscard]] bool requestStandby();
@@ -34,7 +34,7 @@ public:
 
 protected:
     enum class Readiness : std::uint8_t { Pending, Ready, Failed };
-    explicit Subsystem(std::uint32_t preparation_timeout_ms = 5000U) noexcept;
+    Subsystem() noexcept = default;
 
     // 子系统内部的设备事实；整机不检查在线，派生类须同步读取反馈。
     [[nodiscard]] virtual bool isOnline() const = 0;
@@ -59,13 +59,11 @@ private:
         bool reset_preparation{true};
     };
 
-    const std::uint32_t preparation_timeout_ms_;
     Request latest_request_{}; // 请求方和控制任务通过短临界区同步。
     std::atomic<State> state_{State::Disabled};
 
     // 以下字段仅由控制任务访问。
     std::uint32_t active_generation_{0};
-    std::uint32_t preparation_started_ms_{5000};
     bool preparation_started_{false};
     bool prepared_{false};
     bool standby_started_{false};

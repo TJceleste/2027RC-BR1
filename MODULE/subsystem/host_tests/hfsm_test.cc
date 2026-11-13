@@ -42,7 +42,7 @@ int main() {
     assert(pid_init_count == 1 && robot_machine.isActive<Starting>());
     extra_subsystem.online = true;
     tickAll();
-    rtos::clock_ms += 4999;
+    rtos::clock_ms += 60000;
     tickAll();
     robot_machine.update();
     assert(robot_machine.isActive<Starting>() && !extra_subsystem.hasFailed());
