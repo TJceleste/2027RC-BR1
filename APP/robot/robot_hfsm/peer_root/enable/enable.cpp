@@ -1,3 +1,4 @@
+#include "robot.hpp"
 #include "states.hpp"
 
 void robot::Enable::enter() {}

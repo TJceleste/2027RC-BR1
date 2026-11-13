@@ -3,6 +3,7 @@
 #include "asserter.hpp"
 #include "main.h"
 #include "memory_map.h"
+#include "robot_hfsm/config.hpp"
 #include "rtos_utility.hpp"
 #include "hfsm.hpp"
 #include "robot_hfsm/states.hpp"
@@ -13,6 +14,9 @@
 #include "rtos_task.hpp"
 #include "uart_port.hpp"
 #include "c620.hpp"
+#include "test_subsystem.hpp"
+
+#include <array>
 
 namespace robot {
 
@@ -37,6 +41,14 @@ RAM_D1_BSS inline rtos::Task<
 
 inline C620 can1_c620{can1_bus};
 inline C620Motor test_motor{can1_c620, 1};
+inline TestSubsystem test_subsystem{test_motor};
+
+// 全部子系统的注册表，也是正式启动集合；Fault 统一禁用此集合。
+// 各控制任务仍负责调用 periodic()。
+inline const std::array<Subsystem*, 1> subsystems{&test_subsystem};
+
+// 必须是 subsystems 的子集；测试只等待并准备此集合，其余子系统保持待机。
+inline const std::array<Subsystem*, 1> test_subsystems{&test_subsystem};
 
 DMA_BUFFER_BSS inline UartPortDma<32, 32, 32 * 2> uart2_port{huart2, {}};
 inline Rs485Bus rs4851_bus{uart2_port};
@@ -71,7 +83,10 @@ struct Robot_Context {
 using Tree = M::PeerRoot<
     M::Leaf< Disable >,
     M::Composite< Enable,
-        M::Leaf< Starting >,
+        M::Composite< Starting,
+            M::Leaf< WaitPower >,
+            M::Leaf< PrepareSubsystems >
+        >,
         M::Composite< Manual,
             M::Leaf< UniversalManual >
         >,
@@ -80,6 +95,13 @@ using Tree = M::PeerRoot<
             M::Leaf< DevelopingAuto >,
             M::Leaf< Paused >
         >
+    >,
+    M::Composite< Test,
+        M::Composite< TestStarting,
+            M::Leaf< TestWaitPower >,
+            M::Leaf< PrepareTestSubsystems >
+        >,
+        M::Leaf< TestRunning >
     >,
     M::Leaf< Fault >
 >;
