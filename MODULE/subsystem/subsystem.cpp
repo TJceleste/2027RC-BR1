@@ -7,9 +7,9 @@ Subsystem::Subsystem(std::uint32_t preparation_timeout_ms) noexcept
 
 void Subsystem::requestPrepare() {
     taskENTER_CRITICAL();
-    ++request_.generation;
-    request_.mode = Mode::Prepare;
-    request_.reset_preparation = true;
+    ++latest_request_.generation;
+    latest_request_.mode = Mode::Prepare;
+    latest_request_.reset_preparation = true;
     onRequestReset();
     state_.store(State::Preparing);
     taskEXIT_CRITICAL();
@@ -18,31 +18,32 @@ void Subsystem::requestPrepare() {
 bool Subsystem::requestStandby() {
     taskENTER_CRITICAL();
     const bool accepted = !hasFailed();
-    if (accepted && request_.mode != Mode::Standby && request_.mode != Mode::Prepare) {
-        request_.reset_preparation = request_.mode == Mode::Disabled;
-        ++request_.generation;
-        request_.mode = Mode::Standby;
+    if (accepted && latest_request_.mode != Mode::Standby && latest_request_.mode != Mode::Prepare) {
+        latest_request_.reset_preparation = latest_request_.mode == Mode::Disabled;
+        ++latest_request_.generation;
+        latest_request_.mode = Mode::Standby;
         onRequestReset();
         state_.store(State::Preparing);
     }
     taskEXIT_CRITICAL();
     return accepted;
+    // 
 }
 
 bool Subsystem::requestRun() {
     taskENTER_CRITICAL();
-    const bool accepted = (request_.mode == Mode::Prepare || request_.mode == Mode::Standby) &&
+    const bool accepted = (latest_request_.mode == Mode::Prepare || latest_request_.mode == Mode::Standby) &&
                           isStandby();
-    if (accepted) request_.mode = Mode::Run;
+    if (accepted) latest_request_.mode = Mode::Run;
     taskEXIT_CRITICAL();
     return accepted;
 }
 
 void Subsystem::requestDisable() {
     taskENTER_CRITICAL();
-    ++request_.generation;
-    request_.mode = Mode::Disabled;
-    request_.reset_preparation = true;
+    ++latest_request_.generation;
+    latest_request_.mode = Mode::Disabled;
+    latest_request_.reset_preparation = true;
     onRequestReset();
     taskEXIT_CRITICAL();
 }
@@ -51,18 +52,21 @@ Subsystem::State Subsystem::state() const noexcept { return state_.load(); }
 bool Subsystem::isStandby() const noexcept { return state() == State::Standby; }
 bool Subsystem::isRunning() const noexcept { return state() == State::Running; }
 bool Subsystem::hasFailed() const noexcept { return state() == State::Failed; }
+// 判断现在是否接受业务目标。
 bool Subsystem::acceptsCommands() const noexcept {
-    return request_.mode == Mode::Run && isRunning();
+    return latest_request_.mode == Mode::Run && isRunning();
 }
-
+// 默认实现：和正常运行一样，进入待机时保持输出；
+// 比如让调用业务接口让机构回到初始位置，判断动作完成后返回ready，未完成返回Pending
 Subsystem::Readiness Subsystem::onStandby(bool) {
-    return onRun(false) ? Readiness::Ready : Readiness::Failed;
+    return onRun(true) ? Readiness::Ready : Readiness::Failed;
 }
 
 void Subsystem::periodic() {
+    // 请求的快照
     Request request;
     taskENTER_CRITICAL();
-    request = request_;
+    request = latest_request_;
     taskEXIT_CRITICAL();
     const auto now = rtos::now_ms();
 
@@ -79,12 +83,14 @@ void Subsystem::periodic() {
 
     if (request.mode == Mode::Disabled || phase_ == State::Failed) {
         (void)onRun(false);
-    } else if (!isOnline()) {
+    } 
+    else if (!isOnline()) {
         (void)onRun(false);
-        if (request.mode == Mode::Run) {
+        if (request.mode == Mode::Run || prepared_) {
+            // 已建立运行条件后，进入/保持待机时掉线同样需要显式恢复。
             phase_ = State::Failed;
         } else {
-            // 小电阶段只等待；待机机构重新上线后重建必要条件。
+            // 尚未建立运行条件时允许等待上线，不计准备超时。
             phase_ = State::Preparing;
             prepared_ = false;
             preparation_started_ = false;
@@ -106,6 +112,7 @@ void Subsystem::periodic() {
             if (request.mode == Mode::Run) {
                 phase_ = onRun(true) ? State::Running : State::Failed;
             } else {
+                // 进这说明mode是Prepare或Standby，且已准备好，这里进入待机
                 const auto standby = onStandby(!standby_started_);
                 standby_started_ = true;
                 if (standby == Readiness::Failed) phase_ = State::Failed;
@@ -124,7 +131,7 @@ void Subsystem::periodic() {
 
     // 计算期间的新请求在后续周期执行；本轮可能产生一次旧输出，但不能覆盖新状态。
     taskENTER_CRITICAL();
-    if (request_.generation == request.generation && request_.mode == request.mode) {
+    if (latest_request_.generation == request.generation && latest_request_.mode == request.mode) {
         state_.store(phase_);
     }
     taskEXIT_CRITICAL();

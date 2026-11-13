@@ -5,6 +5,7 @@
 #include <span>
 
 void robot::Recovering::entryGuard(robot::GuardControl& control) {
+    // 仅在 Fault 中显式请求恢复时才允许离开 Fault，其他情况均拒绝离开。
     if (!control.isActive<Fault>() || !control.context().recovery_requested.load()) {
         control.cancelPendingTransitions();
     }
@@ -13,7 +14,7 @@ void robot::Recovering::entryGuard(robot::GuardControl& control) {
 void robot::Recovering::enter() {
     phase_ = Phase::Preparing;
     for (auto* subsystem : subsystems) {
-        if (subsystem->state() == Subsystem::State::Disabled || subsystem->hasFailed()) {
+        if (subsystem->state() == Subsystem::State::Disabled) {
             subsystem->requestPrepare();
         } else {
             (void)subsystem->requestStandby();

@@ -60,12 +60,12 @@ private:
     };
 
     const std::uint32_t preparation_timeout_ms_;
-    Request request_{}; // 请求方和控制任务通过短临界区同步。
+    Request latest_request_{}; // 请求方和控制任务通过短临界区同步。
     std::atomic<State> state_{State::Disabled};
 
     // 以下字段仅由控制任务访问。
     std::uint32_t active_generation_{0};
-    std::uint32_t preparation_started_ms_{0};
+    std::uint32_t preparation_started_ms_{5000};
     bool preparation_started_{false};
     bool prepared_{false};
     bool standby_started_{false};

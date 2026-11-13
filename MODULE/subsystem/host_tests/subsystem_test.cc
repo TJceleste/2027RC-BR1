@@ -92,8 +92,11 @@ int main() {
     probe.periodic();
     rtos::clock_ms += 60000;
     probe.periodic();
-    assert(probe.state() == State::Preparing && !probe.hasFailed() && !probe.output);
+    assert(probe.hasFailed() && !probe.output);
     probe.online = true;
+    probe.periodic();
+    assert(probe.hasFailed() && !probe.requestStandby() && probe.prepares == 2);
+    probe.requestPrepare();
     probe.periodic();
     assert(probe.isStandby() && probe.prepares == 3);
     assert(probe.requestRun());
@@ -129,7 +132,35 @@ int main() {
     assert(probe.requestStandby());
     probe.periodic();
     assert(probe.isStandby() && probe.prepares == prepared + 2);
-    std::cout << "PASS: healthy standby reuse, offline retry, fault latch and concurrent requests\n";
+    std::cout << "PASS: healthy standby reuse, standby offline fault latch and concurrent requests\n";
+
+    // Prepare 模式完成后也会处于 Standby，不能只按请求模式判断掉线。
+    ProbeSubsystem prepare_to_standby;
+    prepare_to_standby.requestPrepare();
+    rtos::clock_ms += 60000;
+    prepare_to_standby.periodic();
+    assert(!prepare_to_standby.hasFailed() && prepare_to_standby.prepares == 0);
+    prepare_to_standby.online = true;
+    prepare_to_standby.ready = true;
+    prepare_to_standby.periodic();
+    assert(prepare_to_standby.isStandby());
+    prepare_to_standby.online = false;
+    prepare_to_standby.periodic();
+    assert(prepare_to_standby.hasFailed() && !prepare_to_standby.output);
+
+    ProbeSubsystem entering_standby;
+    assert(entering_standby.requestStandby());
+    entering_standby.periodic();
+    assert(!entering_standby.hasFailed() && entering_standby.prepares == 0);
+    entering_standby.online = true;
+    entering_standby.ready = true;
+    entering_standby.standby_ready = false;
+    entering_standby.periodic();
+    assert(entering_standby.state() == State::Preparing && entering_standby.output);
+    entering_standby.online = false;
+    entering_standby.periodic();
+    assert(entering_standby.hasFailed() && !entering_standby.output);
+    std::cout << "PASS: both request modes wait initially and latch offline faults after preparation\n";
 
     probe.standby_ready = false;
     rtos::clock_ms = 0xFFFFFFFCU;

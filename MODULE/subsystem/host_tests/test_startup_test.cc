@@ -83,4 +83,16 @@ int main() {
     reach<TestRunning>();
     assert(test_subsystem.isRunning() && extra_subsystem.isRunning());
     std::cout << "PASS: repaired participant must finish preparation, timeout requires a fresh recovery flag\n";
+
+    robot_machine.immediateChangeTo<TestStarting>();
+    tickAll();
+    assert(test_subsystem.isStandby() && extra_subsystem.isStandby());
+    extra_subsystem.online = false;
+    tickAll();
+    robot_machine.update();
+    assert(robot_machine.isActive<Fault>());
+    assert(robot_context.faults[1] == Reason::SubsystemFailed);
+    tickAll();
+    assert(test_subsystem.isStandby() && extra_subsystem.state() == SubsystemState::Disabled);
+    std::cout << "PASS: loss of a prepared standby participant enters robot Fault before running\n";
 }

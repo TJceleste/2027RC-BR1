@@ -64,11 +64,11 @@ bool TestSubsystem::onRun(bool enabled) {
     float current_ma = 0.0f;
     bool success = true;
     if (enabled) {
-        float target_speed_snap;
+        float target_speed_snapshot;
         taskENTER_CRITICAL();
-        target_speed_snap = target_speed_;
+        target_speed_snapshot = target_speed_;
         taskEXIT_CRITICAL();
-        current_ma = speed_pid_.calculate(measured_speed_, target_speed_snap);
+        current_ma = speed_pid_.calculate(measured_speed_, target_speed_snapshot);
         success = std::isfinite(current_ma);
     }
 

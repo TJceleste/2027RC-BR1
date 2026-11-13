@@ -20,7 +20,7 @@ Starting 和 TestStarting 均包含“等待待机”和“等待实际运行”
 
 UniversalManual 和 TestRunning 的 entryGuard 只确认所需集合全部 Running，enter 不再发起运行请求。TestRunning 保持原有 10 → 0 → -10 → 0 rad/s 的三秒速度序列，重新进入会从头开始。模式及父状态退出均不禁用。
 
-subsystems 是全部子系统注册表，test_subsystems 必须是子集。Test::enter 为集合外子系统请求待机，撤销原模式目标；它们离线时等待，上线后自行准备到待机，不阻塞测试。正常模式切换分别经 Starting / TestStarting 接管。
+subsystems 是全部子系统注册表，test_subsystems 必须是子集。Test::enter 为集合外子系统请求待机，撤销原模式目标；尚未建立运行条件的机构可等待上线并自行准备，不阻塞测试。已建立条件后，进入或保持待机期间掉线会保持 Failed，上线不会自动恢复。测试分支仍只监控参与集合，整机进入 Fault 时则会一并记录集合外已经失败的机构。正常模式切换分别经 Starting / TestStarting 接管。
 
 ## Fault 和恢复入口
 

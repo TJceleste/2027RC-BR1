@@ -87,10 +87,15 @@ int main() {
     tickAll();
     robot_machine.update();
     assert(robot_machine.isActive<TestRunning>() && !extra_subsystem.output);
+    assert(extra_subsystem.hasFailed());
     extra_subsystem.online = true;
     tickAll();
+    assert(extra_subsystem.hasFailed());
+    // 集合外失败暂不改变整机测试策略；显式重新准备后才能回到待机。
+    extra_subsystem.requestPrepare();
+    tickAll();
     assert(extra_subsystem.isStandby());
-    std::cout << "PASS: mode handoff reuses preparation, test sequence wraps and unused devices retry\n";
+    std::cout << "PASS: mode handoff reuses preparation, test sequence wraps and unused standby faults latch\n";
 
     const auto healthy_prepares = extra_subsystem.prepares;
     robot_context.recovery_requested.store(true); // A stale request must not authorize a new fault.
@@ -119,19 +124,25 @@ int main() {
     assert(robot_context.faults[0] == Reason::None);
     std::cout << "PASS: selective fault isolation, explicit exit flag and recovery of only failed devices\n";
 
-    // An unused offline device must not prevent test-mode fault recovery.
+    // 已经待机的集合外设备掉线属于真实故障，也需要修复后才能解除本轮 Fault。
     extra_subsystem.online = false;
     test_motor.online = false;
     tickAll();
     robot_machine.update();
     assert(robot_machine.isActive<Fault>());
     tickAll();
+    assert(robot_context.faults[1] == Reason::SubsystemFailed);
     test_motor.online = true;
     robot_context.recovery_requested.store(true);
     robot_machine.update();
-    reach<TestRunning>();
+    tickAll();
+    robot_machine.update();
+    assert(robot_machine.isActive<Recovering>());
     assert(extra_subsystem.state() == SubsystemState::Preparing);
-    std::cout << "PASS: test recovery does not wait for healthy devices outside the test subset\n";
+    extra_subsystem.online = true;
+    reach<TestRunning>();
+    assert(extra_subsystem.isStandby());
+    std::cout << "PASS: standby offline faults outside the test subset must also finish fault recovery\n";
 
     // Recovery failure must re-enter Fault and require a fresh request.
     test_motor.online = false;
