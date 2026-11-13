@@ -13,10 +13,12 @@ void robot::TestRunning::entryGuard(robot::GuardControl& control) {
 
 void robot::TestRunning::enter() {
     robot_context.faults.fill(Robot_Context::FaultReason::None);
-    // 子系统已运行，这里只初始化测试业务。
+    
+    // EB: 这里初始化测试业务需要用的量 begin
     speed_sequence_active_ = false;
     speed_phase_ = 0;
     speed_phase_started_ms_ = 0;
+    // EB: end
 }
 
 void robot::TestRunning::update(robot::Control& control) {
@@ -27,6 +29,7 @@ void robot::TestRunning::update(robot::Control& control) {
         }
     }
 
+    // EB: 这里写测试业务逻辑
     constexpr float speeds[]{10.0f, 0.0f, -10.0f, 0.0f};
     const auto now = rtos::now_ms();
     if (!speed_sequence_active_) {
@@ -39,8 +42,8 @@ void robot::TestRunning::update(robot::Control& control) {
         speed_phase_started_ms_ = now;
         (void)test_subsystem.setTargetSpeed(speeds[speed_phase_]);
     }
+    // EB: end
 }
 
 void robot::TestRunning::exit() {
-    speed_sequence_active_ = false;
 }

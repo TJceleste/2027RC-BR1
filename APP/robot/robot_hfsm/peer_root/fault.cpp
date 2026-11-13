@@ -9,8 +9,7 @@ void robot::Fault::enter() {
     bool identified = false;
     // 必须先保存故障来源，再禁用；禁用完成后子系统不再处于 Failed。
     for (std::size_t i = 0; i < subsystems.size(); ++i) {
-        // 所有子系统运行后的故障都归类为 SubsystemFailed，进else
-        // 只有启动阶段的故障才进 if，记录来源和原因。
+        // 定位故障
         if (subsystems[i] == context.pending_fault_source) {
             context.faults[i] = context.pending_fault_reason;
         } else if (subsystems[i]->hasFailed()) {

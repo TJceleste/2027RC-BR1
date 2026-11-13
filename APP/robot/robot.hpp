@@ -42,14 +42,16 @@ RAM_D1_BSS inline rtos::Task<
     rtos::TaskPriority::Realtime
 > can_communication_task;
 
+// EB: 这里声明需要用到的外设和子系统（机构）
 inline C620 can1_c620{can1_bus};
 inline C620Motor test_motor{can1_c620, 1};
 inline TestSubsystem test_subsystem{test_motor};
 
+// EB: 这里声明整车的外设和子系统（机构）
 // 全部子系统的注册表，也是正式启动集合；Fault 按故障记录选择禁用对象。
-// 各控制任务仍负责调用 periodic()。
 inline const std::array<Subsystem*, 1> subsystems{&test_subsystem};
 
+// EB: 这里声明你测试时需要用到的外设和子系统（机构）
 // 必须是 subsystems 的子集；测试只等待并准备此集合，其余子系统保持待机。
 inline const std::array<Subsystem*, 1> test_subsystems{&test_subsystem};
 

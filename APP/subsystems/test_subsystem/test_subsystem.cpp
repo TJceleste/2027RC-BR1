@@ -28,7 +28,6 @@ bool TestSubsystem::setTargetSpeed(float speed) {
 
     // 为子系统业务功能要用到的数据添加临界区保护
     taskENTER_CRITICAL();
-    // 待机、禁用和准备期间不接受测试任务遗留的速度目标。
     const bool running = acceptsCommands();
     if (running) {
         target_speed_ = speed;
@@ -54,7 +53,7 @@ Subsystem::Readiness TestSubsystem::onCheckReadiness() {
     // FDCAN 接收中断优先级为 5，在此临界区内不会改写反馈。
     taskENTER_CRITICAL();
     online = motor_.is_online();
-    measured_speed_ = motor_.get_current_speed();
+    
     taskEXIT_CRITICAL();
     return online ? Readiness::Ready : Readiness::Pending;
 }
@@ -67,12 +66,13 @@ bool TestSubsystem::onRun(bool enabled) {
         float target_speed_snapshot;
         taskENTER_CRITICAL();
         target_speed_snapshot = target_speed_;
+        measured_speed_ = motor_.get_current_speed();
         taskEXIT_CRITICAL();
         current_ma = speed_pid_.calculate(measured_speed_, target_speed_snapshot);
         success = std::isfinite(current_ma);
     }
 
-    // 电机命令也由 CAN 通信任务读取；这里只同步命令，不计算 PID 或检查生命周期请求。
+    // 电机命令也由 CAN 通信任务读取；这里只同步命令
     taskENTER_CRITICAL();
     if (enabled && success) {
         success = motor_.set_output_command({.current_ma = current_ma});

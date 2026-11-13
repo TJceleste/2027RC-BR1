@@ -44,7 +44,7 @@ protected:
     virtual void onPrepare() {}
     // 非阻塞准备步骤及运行条件检查；可执行准备所需的受控动作。
     [[nodiscard]] virtual Readiness onCheckReadiness() = 0;
-    // 运行条件建立后，每周期进入/保持待机；默认关闭输出并完成待机。
+    // 运行条件建立后，每周期进入/保持待机；默认和正常运行一样。
     [[nodiscard]] virtual Readiness onStandby(bool entering);
     // 执行业务输出；enabled=false 必须关闭并清空输出。所有回调须及时返回。
     [[nodiscard]] virtual bool onRun(bool enabled) = 0;
