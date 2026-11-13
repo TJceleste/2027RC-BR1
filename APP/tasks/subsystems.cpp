@@ -8,4 +8,4 @@ rtos::Task<"test_subsystem", ([] {
         robot::test_subsystem.periodic();
         rtos::delay_until(now + 1);
     }
-}), 1024 * 4, rtos::TaskPriority::Realtime> test_subsystem_task;
+}), 1024 * 4, rtos::TaskPriority::High> test_subsystem_task;
