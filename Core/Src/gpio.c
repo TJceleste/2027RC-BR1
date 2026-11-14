@@ -38,6 +38,7 @@
         * Output
         * EVENT_OUT
         * EXTI
+     PA2   ------> S_TIM2_CH3
 */
 void MX_GPIO_Init(void)
 {
@@ -45,37 +46,38 @@ void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOG, PUMP_PICK_Pin|VALVE_CLAW_Pin|GPIO_RESERVED3_Pin|PUMP_LIFT_Pin
+                          |VALVE_PICK_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LED2_Pin|ETH_RST_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(VALVE_LIFT_GPIO_Port, VALVE_LIFT_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin : LED1_Pin */
-  GPIO_InitStruct.Pin = LED1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  /*Configure GPIO pin : PA2 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LED1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : LED2_Pin ETH_RST_Pin */
-  GPIO_InitStruct.Pin = LED2_Pin|ETH_RST_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*AnalogSwitch Config */
-  HAL_SYSCFG_AnalogSwitchConfig(SYSCFG_SWITCH_PA0, SYSCFG_SWITCH_PA0_CLOSE);
+  /*Configure GPIO pins : PUMP_PICK_Pin VALVE_CLAW_Pin GPIO_RESERVED3_Pin VALVE_LIFT_Pin
+                           PUMP_LIFT_Pin VALVE_PICK_Pin */
+  GPIO_InitStruct.Pin = PUMP_PICK_Pin|VALVE_CLAW_Pin|GPIO_RESERVED3_Pin|VALVE_LIFT_Pin
+                          |PUMP_LIFT_Pin|VALVE_PICK_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
 }
 
